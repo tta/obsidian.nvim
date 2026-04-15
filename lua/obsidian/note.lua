@@ -50,6 +50,8 @@ local CODE_BLOCK_PATTERN = "^%s*```[%w_-]*$"
 ---@field blocks table<string, obsidian.note.Block>?
 ---@field alt_alias string|?
 ---@field bufnr integer|?
+---@field external_frontmatter table|?
+---@field frontmatter_mode obsidian.config.FrontmatterMode|?
 local Note = abc.new_class {
   __tostring = function(self)
     return string.format("Note('%s')", self.id)
@@ -83,6 +85,8 @@ Note.new = function(id, aliases, tags, path)
   self.metadata = nil
   self.has_frontmatter = nil
   self.frontmatter_end_line = nil
+  self.external_frontmatter = nil
+  self.frontmatter_mode = nil
   return self
 end
 
@@ -259,6 +263,7 @@ end
 ---@field load_contents boolean|?
 ---@field collect_anchor_links boolean|?
 ---@field collect_blocks boolean|?
+---@field frontmatter_mode obsidian.config.FrontmatterMode|?
 
 --- Initialize a note from a file.
 ---
@@ -500,6 +505,8 @@ Note.from_lines = function(lines, path, opts)
 
   -- Parse the frontmatter YAML.
   local metadata = nil
+  local external_frontmatter = nil
+  local frontmatter_mode = opts.frontmatter_mode
   if #frontmatter_lines > 0 then
     local frontmatter = table.concat(frontmatter_lines, "\n")
     local ok, data = pcall(yaml.loads, frontmatter)
@@ -507,8 +514,37 @@ Note.from_lines = function(lines, path, opts)
       data = {}
     end
     if ok then
+      local obsidian_data
+      if frontmatter_mode == "block" then
+        if data.obsidian ~= nil and type(data.obsidian) == "table" then
+          obsidian_data = data.obsidian
+          for k, v in pairs(data) do
+            if k ~= "obsidian" then
+              if external_frontmatter == nil then
+                external_frontmatter = {}
+              end
+              external_frontmatter[k] = v
+            end
+          end
+        else
+          obsidian_data = {}
+          for k, v in pairs(data) do
+            if k == "id" or k == "aliases" or k == "tags" then
+              obsidian_data[k] = v
+            else
+              if external_frontmatter == nil then
+                external_frontmatter = {}
+              end
+              external_frontmatter[k] = v
+            end
+          end
+        end
+      else
+        obsidian_data = data
+      end
+
       ---@diagnostic disable-next-line: param-type-mismatch
-      for k, v in pairs(data) do
+      for k, v in pairs(obsidian_data) do
         if k == "id" then
           if type(v) == "string" or type(v) == "number" then
             id = v
@@ -576,6 +612,8 @@ Note.from_lines = function(lines, path, opts)
   n.metadata = metadata
   n.has_frontmatter = has_frontmatter
   n.frontmatter_end_line = frontmatter_end_line
+  n.frontmatter_mode = frontmatter_mode
+  n.external_frontmatter = external_frontmatter
   n.contents = contents
   n.anchor_links = anchor_links
   n.blocks = blocks
@@ -597,13 +635,25 @@ end
 ---
 ---@return table
 Note.frontmatter = function(self)
-  local out = { id = self.id, aliases = self.aliases, tags = self.tags }
+  local obsidian_block = { id = self.id, aliases = self.aliases, tags = self.tags }
   if self.metadata ~= nil and not vim.tbl_isempty(self.metadata) then
     for k, v in pairs(self.metadata) do
-      out[k] = v
+      obsidian_block[k] = v
     end
   end
-  return out
+
+  if self.frontmatter_mode == "block" then
+    local out = {}
+    if self.external_frontmatter ~= nil then
+      for k, v in pairs(self.external_frontmatter) do
+        out[k] = v
+      end
+    end
+    out.obsidian = obsidian_block
+    return out
+  end
+
+  return obsidian_block
 end
 
 --- Get frontmatter lines that can be written to a buffer.
@@ -620,8 +670,37 @@ Note.frontmatter_lines = function(self, eol, frontmatter)
     return {}
   end
 
-  for line in
-    iter(yaml.dumps_lines(frontmatter_, function(a, b)
+  local is_block_mode = self.frontmatter_mode == "block"
+
+  local sort_fn
+  if is_block_mode then
+    sort_fn = function(a, b)
+      local a_idx = nil
+      local b_idx = nil
+      for i, k in ipairs { "id", "aliases", "tags" } do
+        if a == k then
+          a_idx = i
+        end
+        if b == k then
+          b_idx = i
+        end
+      end
+      if a_idx ~= nil and b_idx ~= nil then
+        return a_idx < b_idx
+      elseif a_idx ~= nil then
+        return true
+      elseif b_idx ~= nil then
+        return false
+      elseif a == "obsidian" then
+        return false
+      elseif b == "obsidian" then
+        return true
+      else
+        return a < b
+      end
+    end
+  else
+    sort_fn = function(a, b)
       local a_idx = nil
       local b_idx = nil
       for i, k in ipairs { "id", "aliases", "tags" } do
@@ -641,8 +720,10 @@ Note.frontmatter_lines = function(self, eol, frontmatter)
       else
         return a < b
       end
-    end))
-  do
+    end
+  end
+
+  for line in iter(yaml.dumps_lines(frontmatter_, sort_fn)) do
     table.insert(new_lines, line)
   end
 

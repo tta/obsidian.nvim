@@ -51,6 +51,7 @@ return function(client, data)
     cur_note_bufnr = assert(vim.fn.bufnr())
     cur_note_path = Path.buffer(cur_note_bufnr)
     cur_note = Note.from_file(cur_note_path)
+    cur_note.frontmatter_mode = client.opts.frontmatter_mode
     cur_note_id = tostring(cur_note.id)
   else
     local notes = { client:resolve_note(cur_note_id) }

@@ -206,7 +206,7 @@ obsidian.setup = function(opts)
 
       -- Initialize note.
       local bufnr = ev.buf
-      local note = obsidian.Note.from_buffer(bufnr)
+      local note = obsidian.Note.from_buffer(bufnr, client:_note_load_opts())
 
       -- Run pre-write-note callback.
       client.callback_manager:pre_write_note(note)

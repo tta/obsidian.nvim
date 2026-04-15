@@ -19,6 +19,7 @@ local config = {}
 ---@field follow_img_func fun(img: string)|?
 ---@field note_frontmatter_func (fun(note: obsidian.Note): table)|?
 ---@field disable_frontmatter (fun(fname: string?): boolean)|boolean|?
+---@field frontmatter_mode obsidian.config.FrontmatterMode
 ---@field completion obsidian.config.CompletionOpts
 ---@field mappings obsidian.config.MappingOpts
 ---@field picker obsidian.config.PickerOpts
@@ -52,6 +53,7 @@ config.ClientOpts.default = function()
     follow_url_func = nil,
     note_frontmatter_func = nil,
     disable_frontmatter = false,
+    frontmatter_mode = config.FrontmatterMode.flat,
     completion = config.CompletionOpts.default(),
     mappings = config.MappingOpts.default(),
     picker = config.PickerOpts.default(),
@@ -249,6 +251,12 @@ config.ClientOpts.normalize = function(opts, defaults)
 
   return opts
 end
+
+---@enum obsidian.config.FrontmatterMode
+config.FrontmatterMode = {
+  flat = "flat",
+  block = "block",
+}
 
 ---@enum obsidian.config.OpenStrategy
 config.OpenStrategy = {

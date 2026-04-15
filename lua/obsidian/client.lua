@@ -276,6 +276,15 @@ Client.templates_dir = function(self, workspace)
   return nil
 end
 
+--- Get default LoadOpts that propagate client config to Note loading.
+---
+---@return obsidian.note.LoadOpts
+Client._note_load_opts = function(self)
+  return {
+    frontmatter_mode = self.opts.frontmatter_mode,
+  }
+end
+
 --- Determines whether a note's frontmatter is managed by obsidian.nvim.
 ---
 ---@param note obsidian.Note
@@ -610,7 +619,7 @@ end
 ---@return obsidian.Note|?
 Client.resolve_note_async = function(self, query, callback, opts)
   opts = opts or {}
-  opts.notes = opts.notes or {}
+  opts.notes = vim.tbl_extend("force", self:_note_load_opts(), opts.notes or {})
   if not opts.notes.max_lines then
     opts.notes.max_lines = self.opts.search_max_lines
   end
@@ -1004,7 +1013,7 @@ Client.current_note = function(self, bufnr, opts)
     return nil
   end
 
-  opts = opts or {}
+  opts = vim.tbl_extend("force", self:_note_load_opts(), opts or {})
   if not opts.max_lines then
     opts.max_lines = self.opts.search_max_lines
   end
@@ -1847,6 +1856,10 @@ Client.write_note = function(self, note, opts)
     frontmatter = self.opts.note_frontmatter_func(note)
   end
 
+  if note.frontmatter_mode == nil then
+    note.frontmatter_mode = self.opts.frontmatter_mode
+  end
+
   note:save {
     path = path,
     insert_frontmatter = self:should_save_frontmatter(note),
@@ -1887,6 +1900,10 @@ Client.write_note_to_buffer = function(self, note, opts)
     frontmatter = self.opts.note_frontmatter_func(note)
   end
 
+  if note.frontmatter_mode == nil then
+    note.frontmatter_mode = self.opts.frontmatter_mode
+  end
+
   return note:save_to_buffer {
     bufnr = opts.bufnr,
     insert_frontmatter = should_save_frontmatter,
@@ -1909,6 +1926,11 @@ Client.update_frontmatter = function(self, note, bufnr)
   if self.opts.note_frontmatter_func ~= nil then
     frontmatter = self.opts.note_frontmatter_func(note)
   end
+
+  if note.frontmatter_mode == nil then
+    note.frontmatter_mode = self.opts.frontmatter_mode
+  end
+
   return note:save_to_buffer { bufnr = bufnr, frontmatter = frontmatter }
 end
 

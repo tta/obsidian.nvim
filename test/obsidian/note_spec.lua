@@ -246,3 +246,117 @@ describe("Note._is_frontmatter_boundary()", function()
     assert.is_true(Note._is_frontmatter_boundary "----")
   end)
 end)
+
+describe("Note (block frontmatter mode)", function()
+  it("should parse obsidian block from frontmatter", function()
+    local note = Note.from_file("test/fixtures/notes/note_with_obsidian_block.md", {
+      frontmatter_mode = "block",
+    })
+    assert.equals(note.id, "blocked-note")
+    assert.equals(#note.aliases, 1)
+    assert.equals(note.aliases[1], "Blocked")
+    assert.equals(#note.tags, 1)
+    assert.equals(note.tags[1], "test")
+    assert.is_not(note.metadata, nil)
+    assert.equals(note.metadata.custom, "value")
+    assert.is_true(note.has_frontmatter)
+  end)
+
+  it("should preserve external frontmatter keys", function()
+    local note = Note.from_file("test/fixtures/notes/note_with_obsidian_block.md", {
+      frontmatter_mode = "block",
+    })
+    assert.is_not(note.external_frontmatter, nil)
+    assert.equals(note.external_frontmatter.title, "My Note")
+    assert.equals(note.external_frontmatter.author, "Pandoc")
+  end)
+
+  it("should round-trip block frontmatter", function()
+    local note = Note.from_file("test/fixtures/notes/note_with_obsidian_block.md", {
+      frontmatter_mode = "block",
+    })
+    local lines = note:frontmatter_lines()
+    local result = table.concat(lines, "\n")
+
+    assert.equals("---", lines[1])
+    assert.equals("---", lines[#lines])
+
+    assert.is_not(string.find(result, "author: Pandoc", 1, true), nil)
+    assert.is_not(string.find(result, "title: My Note", 1, true), nil)
+    assert.is_not(string.find(result, "id: blocked-note", 1, true), nil)
+    assert.is_not(string.find(result, "custom: value", 1, true), nil)
+  end)
+
+  it("should save and reload block frontmatter preserving external keys", function()
+    local note = Note.from_file("test/fixtures/notes/note_with_obsidian_block.md", {
+      frontmatter_mode = "block",
+    })
+    note:add_alias "Extra"
+    note:save { path = "./test/fixtures/notes/note_with_obsidian_block_saved.md" }
+
+    local reloaded = Note.from_file("test/fixtures/notes/note_with_obsidian_block_saved.md", {
+      frontmatter_mode = "block",
+    })
+    assert.equals(reloaded.id, "blocked-note")
+    assert.equals(#reloaded.aliases, 2)
+    assert.equals(reloaded.external_frontmatter.title, "My Note")
+    assert.equals(reloaded.external_frontmatter.author, "Pandoc")
+    assert.equals(reloaded.metadata.custom, "value")
+  end)
+
+  it("should default to flat mode and read top-level keys", function()
+    local note = Note.from_file("test/fixtures/notes/foo.md", {
+      frontmatter_mode = "flat",
+    })
+    assert.equals(note.id, "foo")
+    assert.is_nil(note.external_frontmatter)
+  end)
+
+  it("should handle block mode on a note without an obsidian key", function()
+    local note = Note.from_file("test/fixtures/notes/note_without_frontmatter.md", {
+      frontmatter_mode = "block",
+    })
+    assert.equals(note.id, "note_without_frontmatter")
+    assert.is_nil(note.external_frontmatter)
+  end)
+
+  it("should migrate flat frontmatter to block mode without data loss", function()
+    local note = Note.from_file("test/fixtures/notes/note_with_additional_metadata.md", {
+      frontmatter_mode = "block",
+    })
+    assert.equals(note.id, "note_with_additional_metadata")
+    assert.is_nil(note.metadata)
+    assert.is_not(note.external_frontmatter, nil)
+    assert.equals(note.external_frontmatter.foo, "bar")
+
+    local lines = note:frontmatter_lines()
+    local result = table.concat(lines, "\n")
+
+    assert.is_not(string.find(result, "id: note_with_additional_metadata", 1, true), nil)
+    assert.is_not(string.find(result, "obsidian:", 1, true), nil)
+    assert.is_nil(string.find(result, "\nid: note_with_additional_metadata\n", 1, true))
+    assert.is_not(string.find(result, "foo: bar", 1, true), nil)
+
+    local obsidian_match = string.find(result, "obsidian:", 1, true)
+    local foo_match = string.find(result, "foo: bar", 1, true)
+    assert.is_true(foo_match < obsidian_match)
+  end)
+
+  it("should round-trip migrated flat note preserving external keys and adding obsidian block", function()
+    local note = Note.from_file("test/fixtures/notes/note_with_additional_metadata.md", {
+      frontmatter_mode = "block",
+    })
+    note:save { path = "./test/fixtures/notes/note_with_additional_metadata_migrated.md" }
+
+    local reloaded = Note.from_file("test/fixtures/notes/note_with_additional_metadata_migrated.md", {
+      frontmatter_mode = "block",
+    })
+    assert.equals(reloaded.id, "note_with_additional_metadata")
+    assert.is_not(reloaded.external_frontmatter, nil)
+    assert.is_nil(reloaded.external_frontmatter.id)
+    assert.is_nil(reloaded.external_frontmatter.aliases)
+    assert.is_nil(reloaded.external_frontmatter.tags)
+    assert.equals(reloaded.external_frontmatter.foo, "bar")
+    assert.is_nil(reloaded.metadata)
+  end)
+end)
