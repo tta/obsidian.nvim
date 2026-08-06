@@ -1,6 +1,8 @@
 local Path = require "obsidian.path"
 local Note = require "obsidian.note"
 local obsidian = require "obsidian"
+local async = require "plenary.async"
+local channel = require("plenary.async.control").channel
 
 ---Get a client in a temporary directory.
 ---
@@ -160,7 +162,7 @@ describe("Client:parse_title_id_path()", function()
     with_tmp_client(function(client)
       client.opts.note_path_func = function(_)
         return "foo-bar-123.md"
-      end
+      end;
 
       (client.dir / "notes"):mkdir { exist_ok = true }
 
@@ -224,6 +226,103 @@ describe("Client:daily_note_path()", function()
       local path, id = client:daily_note_path()
       assert(vim.endswith(tostring(path), tostring(os.date("%Y/%b/%Y-%m-%d.md", os.time()))))
       assert.equals(id, os.date("%Y-%m-%d", os.time()))
+    end)
+  end)
+end)
+
+describe("Client:resolve_link_async() non-markdown files", function()
+  it("should resolve a wiki link to an existing non-md file by basename under the vault", function()
+    with_tmp_client(function(client)
+      local inbox = client.dir / "00-inbox"
+      inbox:mkdir { parents = true }
+      local note_path = inbox / "note.md"
+      note_path:touch()
+      vim.fn.writefile({ "# Note", "See [[my_script.sh]]" }, tostring(note_path))
+
+      local script_path = client.dir / "my_script.sh"
+      script_path:touch()
+      vim.fn.writefile({ "#!/bin/bash", "echo hi" }, tostring(script_path))
+
+      -- Simulate editing from a note in a subdirectory (like :ObsidianFollowLink under the cursor).
+      client.buf_dir = inbox
+
+      async.util.block_on(function()
+        local tx, rx = channel.oneshot()
+        client:resolve_link_async("[[my_script.sh]]", function(res)
+          assert.is_not_nil(res)
+          assert.equals("my_script.sh", res.location)
+          assert.is_nil(res.note)
+          assert.is_not_nil(res.path)
+          assert.is_true(res.path:is_file())
+          assert.equals(tostring(script_path:resolve()), tostring(res.path:resolve()))
+          tx()
+        end)
+        rx()
+      end, 10000)
+    end)
+  end)
+
+  it("should resolve a vault-relative path to a non-md file", function()
+    with_tmp_client(function(client)
+      local scripts = client.dir / "scripts"
+      scripts:mkdir { parents = true }
+      local script_path = scripts / "tool.py"
+      script_path:touch()
+      vim.fn.writefile({ "print('hi')" }, tostring(script_path))
+
+      async.util.block_on(function()
+        local tx, rx = channel.oneshot()
+        client:resolve_link_async("[[scripts/tool.py]]", function(res)
+          assert.is_not_nil(res)
+          assert.is_nil(res.note)
+          assert.is_not_nil(res.path)
+          assert.equals(tostring(script_path:resolve()), tostring(res.path:resolve()))
+          tx()
+        end)
+        rx()
+      end, 10000)
+    end)
+  end)
+end)
+
+describe("Client:follow_link_async() non-markdown files", function()
+  it("should open an existing non-md vault file without creating a note", function()
+    with_tmp_client(function(client)
+      local inbox = client.dir / "00-inbox"
+      inbox:mkdir { parents = true }
+      local note_path = inbox / "note.md"
+      note_path:touch()
+      vim.fn.writefile({ "# Note", "See [[my_script.sh]]" }, tostring(note_path))
+
+      local script_path = client.dir / "my_script.sh"
+      script_path:touch()
+      vim.fn.writefile({ "#!/bin/bash", "echo hi" }, tostring(script_path))
+
+      client.buf_dir = inbox
+
+      -- Stub confirm so a regression that prompts to create a note fails the test loudly.
+      local util = require "obsidian.util"
+      local confirm_called = false
+      util.confirm = function()
+        confirm_called = true
+        return false
+      end
+
+      async.util.block_on(function()
+        local tx, rx = channel.oneshot()
+        client:follow_link_async "[[my_script.sh]]"
+        -- follow_link_async schedules the open on the main loop
+        vim.wait(2000, function()
+          local bufname = vim.api.nvim_buf_get_name(0)
+          return bufname ~= "" and vim.endswith(bufname, "my_script.sh")
+        end)
+        local bufname = vim.api.nvim_buf_get_name(0)
+        assert.is_true(vim.endswith(bufname, "my_script.sh"), "expected buffer to open my_script.sh, got: " .. bufname)
+        assert.equals(tostring(script_path:resolve()), tostring(Path.new(bufname):resolve()))
+        assert.is_false(confirm_called, "should not prompt to create a note for an existing non-md file")
+        tx()
+        rx()
+      end, 10000)
     end)
   end)
 end)

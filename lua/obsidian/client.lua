@@ -832,17 +832,62 @@ Client.resolve_link_async = function(self, link, callback)
 
   res.location = location
 
+  --- Resolve `location` as an existing non-markdown vault file (scripts, configs, etc.).
+  --- Checks CWD/absolute path, vault-relative path, buffer directory, then vault-wide basename search.
+  ---
+  ---@param on_done fun()
+  local function resolve_non_note_path(on_done)
+    ---@type obsidian.Path[]
+    local paths_to_check = { Path.new(location), self.dir / location }
+
+    if self.buf_dir ~= nil then
+      paths_to_check[#paths_to_check + 1] = self.buf_dir / location
+    end
+
+    for _, path in ipairs(paths_to_check) do
+      if path:is_file() then
+        res.path = path
+        return callback(res)
+      end
+    end
+
+    -- Fall back to vault-wide search for existing non-markdown files (basename / partial path).
+    self:find_files_async(location, function(paths)
+      ---@type obsidian.Path[]
+      local exact = {}
+      local location_name = Path.new(location).name
+      for _, path in ipairs(paths) do
+        if path.name == location_name or vim.endswith(tostring(path), location) then
+          exact[#exact + 1] = path
+        end
+      end
+
+      if #exact == 0 then
+        exact = paths
+      end
+
+      if #exact == 1 then
+        res.path = exact[1]
+        return callback(res)
+      elseif #exact > 1 then
+        local matches = {}
+        for _, path in ipairs(exact) do
+          matches[#matches + 1] = vim.tbl_extend("force", {}, res, { path = path })
+        end
+        return callback(unpack(matches))
+      end
+
+      return on_done()
+    end)
+  end
+
   self:resolve_note_async(location, function(...)
     local notes = { ... }
 
     if #notes == 0 then
-      local path = Path.new(location)
-      if path:exists() then
-        res.path = path
+      return resolve_non_note_path(function()
         return callback(res)
-      else
-        return callback(res)
-      end
+      end)
     end
 
     local matches = {}
@@ -891,6 +936,15 @@ Client.follow_link_async = function(self, link, opts)
           log.warn "This looks like an image path. You can customize the behavior of images with the 'follow_img_func' option."
         end
         return
+      end
+
+      -- Open resolved non-markdown vault files (scripts, configs, etc.) without creating a note.
+      if res.path ~= nil and res.path:is_file() then
+        return self:open_note(res.path, {
+          line = res.line,
+          col = res.col,
+          open_strategy = opts.open_strategy,
+        })
       end
 
       if res.link_type == search.RefTypes.Wiki or res.link_type == search.RefTypes.WikiWithAlias then
